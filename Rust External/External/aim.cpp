@@ -1,210 +1,151 @@
 #include "aim.h"
 
-bool InFov(class BasePlayer& BasePlayer_on_Aimming, enum BoneList bone)
+// Checks if the target is within the Field of View (FOV)
+bool InFov(BasePlayer& BasePlayer_on_Aimming, BoneList bone)
 {
+    Vector2 ScreenPos;
+    if (!myLocalPlayer.WorldToScreen(BasePlayer_on_Aimming.GetBonePosition(head), &ScreenPos)) 
+        return false;
 
-	Vector2 ScreenPos;
-	if (!myLocalPlayer.WorldToScreen(BasePlayer_on_Aimming.GetBonePosition(head), &ScreenPos)) return false;
-
-	return Math::Calc2D_Dist(Vector2(Vars::Config::ScreenWidth / 2, Vars::Config::ScreenHigh / 2), ScreenPos) <= Vars::Aim::fov;
+    // Calculate the distance from the center of the screen
+    return Math::Calc2D_Dist(Vector2(Vars::Config::ScreenWidth / 2, Vars::Config::ScreenHigh / 2), ScreenPos) <= Vars::Aim::fov;
 }
 
-
+// Normalize the angles to prevent exceeding valid ranges
 void Normalize(Vector2& angle)
 {
-	if (angle.x > 89)angle.x = 89;
-	if (angle.x < -89)angle.x = -89;
-	while (angle.y > 180)angle.y -= 360;
-	while (angle.y < -180)angle.y += 360;
+    angle.x = std::clamp(angle.x, -89.0f, 89.0f);  // Limit the X angle between -89 and 89
+    angle.y = fmod(angle.y, 360.0f);  // Wrap Y angle between -180 and 180
+    if (angle.y > 180) angle.y -= 360;  // Adjust Y angle to fit the -180 to 180 range
 }
 
-
+// Retrieves the bullet speed based on the active weapon
 float GetBulletSpeed()
 {
-	switch (myLocalPlayer.myActiveWeapon.GetID())
-	{
-	case 1545779598: //ak47
-		return 375.f;
-	case 2482412119: //lr300
-		return 375.f;
-	case 3390104151: //semi-rifle
-		return 375.f;
-	case 28201841: //m39
-		return 375.f* 1.16f;
-	case 2225388408: //m249
-		return 375.f * 1.4f;
-
-	case 1588298435: //bolt
-		return 375.f * 1.8f;
-	case 3516600001: //l96	
-		return 375.f * 3.2f;
-
-	case 1318558775: //mp5a4
-		return 300.f * 0.8f;
-	case 1796682209: //smg
-		return 300.f * 0.8f;
-	case 2536594571: //thompson
-		return 300.f;
-	case 3442404277: //m92
-		return 300.f;
-	case 818877484: //semi-pistol
-		return 300.f;
-	case 1373971859: //python
-		return 300.f;
-	case 649912614: //revolver
-		return 300.f;
-
-	default:
-		return 0.f;
-
-		/*
-	case 1801741824: //bolt
-		return 656.25f;
-	case 1798229440: //l96
-		return 1125.f;
-	case 1802481984: //m39
-		return 469.f;
-	case 1798228096: //revolver
-		return 300.f;
-	case 818877484: //p250
-		return 300.f;
-	case 1802077840: //waterpipe, 250-green ammo, 100-other
-		return 100.f;
-	case 1798227968: //double barrel, 250-green ammo, 100-other
-		return 100.f;
-		*/
-
-
-	}
+    switch (myLocalPlayer.myActiveWeapon.GetID())
+    {
+        case 1545779598: // AK47
+        case 2482412119: // LR300
+        case 3390104151: // Semi-rifle
+            return 375.f;
+        case 28201841: // M39
+            return 375.f * 1.16f;
+        case 2225388408: // M249
+            return 375.f * 1.4f;
+        case 1588298435: // Bolt-action
+            return 375.f * 1.8f;
+        case 3516600001: // L96
+            return 375.f * 3.2f;
+        case 1318558775: // MP5A4
+        case 1796682209: // SMG
+        case 2536594571: // Thompson
+        case 3442404277: // M92
+        case 818877484:  // Semi-pistol
+        case 1373971859: // Python
+        case 649912614:  // Revolver
+            return 300.f;
+        default:
+            return 0.f;  // Unknown weapon, return 0
+    }
 }
 
-
-//unuse
-double CalcBulletDrop(double height, double DepthPlayerTarget, float velocity, float gravity) {
-	double pitch = (atan2(height, DepthPlayerTarget));
-	double BulletVelocityXY = velocity * cos(pitch);
-	double Time = DepthPlayerTarget / BulletVelocityXY;
-	double TotalVerticalDrop = (0.5f * gravity * Time * Time);
-	return TotalVerticalDrop * 10;
+// Calculates the bullet drop, unused but preserved
+double CalcBulletDrop(double height, double DepthPlayerTarget, float velocity, float gravity)
+{
+    double pitch = atan2(height, DepthPlayerTarget);
+    double BulletVelocityXY = velocity * cos(pitch);
+    double Time = DepthPlayerTarget / BulletVelocityXY;
+    return (0.5f * gravity * Time * Time) * 10;
 }
 
+// Predict the target's future position
 Vector3 Prediction(const Vector3& my_Pos, BasePlayer& BasePlayer_on_Aimming, BoneList Bone)
 {
+    Vector3 BonePos = BasePlayer_on_Aimming.GetBonePosition(Bone);
+    float Dist = Math::Calc3D_Dist(my_Pos, BonePos);
 
+    float BulletSpeed = GetBulletSpeed();
+    if (BulletSpeed <= 0) return BonePos;
 
-	Vector3 BonePos = BasePlayer_on_Aimming.GetBonePosition(Bone);
+    float BulletTime = Dist / BulletSpeed;
+    Vector3 vel = BasePlayer_on_Aimming.GetVelocity();
+    Vector3 Predict = vel * BulletTime;
+    BonePos += Predict;
 
-	float Dist = Math::Calc3D_Dist(my_Pos, BonePos);
+    // Adjust for bullet trajectory and angle
+    float DegAngle = myLocalPlayer.GetBA().x;
+    float coef = (DegAngle >= 10 && Dist <= 100) ? cos(DEG2RAD(DegAngle)) * 0.1f : cos(DEG2RAD(DegAngle)) * 0.9f;
+    BonePos.y += (6.4f * BulletTime * BulletTime) * coef;  // Adjust for bullet drop over time
 
-	float BulletSpeed= GetBulletSpeed();
-	if (BulletSpeed <= 0)return BonePos;
-
-	float BulletTime = Dist / BulletSpeed;
-	Vector3 vel = BasePlayer_on_Aimming.GetVelocity();
-	Vector3 Predict = vel * BulletTime;
-	BonePos += Predict;
-
-
-	float DegAngle = myLocalPlayer.GetBA().x;
-	float coef = 1;
-	if (DegAngle >= 10 && Dist <=100)
-	{
-		coef = cos(DEG2RAD(DegAngle)) * 0.1f;
-	}
-	else if(DegAngle>=0)
-	{
-		coef = cos(DEG2RAD(DegAngle)) * 0.9f;
-	}
-	BonePos.y += (6.4f * BulletTime * BulletTime) * coef;//4.94f
-
-
-	//std::cout << "coef: "<< coef << std::endl;
-	//std::cout << "DegAngle: " << DegAngle << std::endl;
-	//BonePos.y -= BonePos.y*1.f / Dist;
-
-	return  BonePos;
-	
+    return BonePos;
 }
 
+// Adjust the aim to go towards the target
 void GoToTarget(BasePlayer &BasePlayer_on_Aimming, BoneList bone)
 {
+    Vector3 Local = myLocalPlayer.GetBonePosition(head);
+    Vector3 PlayerPos = Prediction(Local, BasePlayer_on_Aimming, bone);
+    Vector2 Offset = Math::CalcAngle(Local, PlayerPos) - myLocalPlayer.GetBA();
 
+    Normalize(Offset);
 
-	Vector3 Local = myLocalPlayer.GetBonePosition(head);
-	Vector3 PlayerPos = Prediction(Local, BasePlayer_on_Aimming, bone);
-	Vector2 Offset = Math::CalcAngle(Local, PlayerPos) - myLocalPlayer.GetBA();
-	//std::cout << "Local:" << Local.x << " " << Local.y <<" "<< Local.z<< std::endl;
+    // Apply smoothing based on configuration
+    Offset.x *= 1.0f - (Vars::Aim::smooth * 0.3f + 0.4f);
+    Offset.y *= 1.0f - (Vars::Aim::smooth * 0.3f + 0.4f);
 
-
-	Normalize(Offset);
-
-	//std::cout << "Offset:" << Offset.x << " " << Offset.y << std::endl;
-	Offset.x *= 1.0f - (Vars::Aim::smooth* 0.3+0.4);
-    Offset.y *= 1.0f - (Vars::Aim::smooth *0.3+0.4);
-
-	Vector2 AngleToAim = myLocalPlayer.GetBA() + Offset;
-	myLocalPlayer.SetBA(AngleToAim);
+    Vector2 AngleToAim = myLocalPlayer.GetBA() + Offset;
+    myLocalPlayer.SetBA(AngleToAim);
 }
 
+// Main function to handle aiming logic
 void Aim(DWORD64& BasePlayer_on_Aimming)
 {
-	static BasePlayer Player;
-	Player.set_addr(BasePlayer_on_Aimming);
+    static BasePlayer Player;
+    Player.set_addr(BasePlayer_on_Aimming);
 
+    if (BasePlayer_on_Aimming && (GetAsyncKeyState(VK_RBUTTON) & 0x8000))
+    {
+        if (Player.IsDead()) 
+            BasePlayer_on_Aimming = NULL;
+        else
+        {
+            // Random bone selection if enabled
+            static int boneArr[6] = { head, spine1, r_upperarm, l_breast, r_hand };
+            static BoneList bone;
+            static DWORD64 isBasePlayerChange = NULL;
 
-	if (BasePlayer_on_Aimming && (GetAsyncKeyState(VK_RBUTTON) & 0x8000))
-	{
+            if (isBasePlayerChange != Player.get_addr())
+            {
+                bone = Vars::Aim::randomBone ? BoneList(boneArr[int(rand() % 6)]) : head;
+                isBasePlayerChange = Player.get_addr();
+            }
 
-		if (Player.IsDead())BasePlayer_on_Aimming = NULL;
-		else
-		{
+            static int start = 0;
+            static int summ = 0;
+            summ += clock() - start;
+            start = clock();
 
-			static int boneArr[6] = { head ,spine1 ,r_upperarm ,l_breast ,r_hand };
-			static BoneList bone;
-			static DWORD64 isBasePlayerChange = NULL;
-			if (isBasePlayerChange != Player.get_addr())
-			{
-				if (Vars::Aim::randomBone)bone = BoneList(boneArr[int(rand() % 6)]);
-				else bone = head;
+            if (summ >= 20)  // Refresh every 20ms
+            {
+                GoToTarget(Player, bone);
+                summ = 0;
+            }
 
-				isBasePlayerChange = Player.get_addr();
-			}
+            // Recoil Control System (RCS) logic
+            static int RCSstart = 0;
+            static int RCSsumm = 0;
+            RCSsumm += clock() - RCSstart;
+            RCSstart = clock();
 
-			static int start = 0;
-			static int summ = 0;
-
-			summ += clock() - start;
-			start = clock();
-
-			if (summ >= 20)
-			{
-				GoToTarget(Player, bone);
-				summ = 0;
-			}
-
-
-
-			
-			//увелививаем smooth-ухудшаем контроль отдачи
-			static int RCSstart = 0;
-			static int RCSsumm = 0;
-
-			RCSsumm += clock() - RCSstart;
-			RCSstart = clock();
-
-			
-			if (RCSsumm >= (0.2 + Vars::Aim::smooth * 0.3)*10   )
-			{
-				myLocalPlayer.SetRA({ 0.f,0.f });
-				RCSsumm = 0;
-			}
-		
-
-
-
-		}
-
-
-	}
-	else BasePlayer_on_Aimming=NULL;
+            if (RCSsumm >= (0.2f + Vars::Aim::smooth * 0.3f) * 10)
+            {
+                myLocalPlayer.SetRA({ 0.f, 0.f });  // Reset recoil aim
+                RCSsumm = 0;
+            }
+        }
+    }
+    else
+    {
+        BasePlayer_on_Aimming = NULL;  // Reset if not aiming
+    }
 }
