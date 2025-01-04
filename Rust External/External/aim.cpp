@@ -1,4 +1,5 @@
 #include "aim.h"
+#include <random>
 
 // Checks if the target is within the Field of View (FOV)
 bool InFov(BasePlayer& BasePlayer_on_Aimming, BoneList bone)
@@ -15,7 +16,7 @@ bool InFov(BasePlayer& BasePlayer_on_Aimming, BoneList bone)
 void Normalize(Vector2& angle)
 {
     angle.x = std::clamp(angle.x, -89.0f, 89.0f);  // Limit the X angle between -89 and 89
-    angle.y = fmod(angle.y, 360.0f);  // Wrap Y angle between -180 and 180
+    angle.y = std::fmod(angle.y, 360.0f);  // Wrap Y angle between -180 and 180
     if (angle.y > 180) angle.y -= 360;  // Adjust Y angle to fit the -180 to 180 range
 }
 
@@ -49,15 +50,6 @@ float GetBulletSpeed()
     }
 }
 
-// Calculates the bullet drop, unused but preserved
-double CalcBulletDrop(double height, double DepthPlayerTarget, float velocity, float gravity)
-{
-    double pitch = atan2(height, DepthPlayerTarget);
-    double BulletVelocityXY = velocity * cos(pitch);
-    double Time = DepthPlayerTarget / BulletVelocityXY;
-    return (0.5f * gravity * Time * Time) * 10;
-}
-
 // Predict the target's future position
 Vector3 Prediction(const Vector3& my_Pos, BasePlayer& BasePlayer_on_Aimming, BoneList Bone)
 {
@@ -81,7 +73,7 @@ Vector3 Prediction(const Vector3& my_Pos, BasePlayer& BasePlayer_on_Aimming, Bon
 }
 
 // Adjust the aim to go towards the target
-void GoToTarget(BasePlayer &BasePlayer_on_Aimming, BoneList bone)
+void GoToTarget(BasePlayer& BasePlayer_on_Aimming, BoneList bone)
 {
     Vector3 Local = myLocalPlayer.GetBonePosition(head);
     Vector3 PlayerPos = Prediction(Local, BasePlayer_on_Aimming, bone);
@@ -116,7 +108,11 @@ void Aim(DWORD64& BasePlayer_on_Aimming)
 
             if (isBasePlayerChange != Player.get_addr())
             {
-                bone = Vars::Aim::randomBone ? BoneList(boneArr[int(rand() % 6)]) : head;
+                // Use random bone selection logic
+                static std::random_device rd;
+                static std::mt19937 gen(rd());
+                static std::uniform_int_distribution<int> dis(0, 5);
+                bone = Vars::Aim::randomBone ? BoneList(boneArr[dis(gen)]) : head;
                 isBasePlayerChange = Player.get_addr();
             }
 
